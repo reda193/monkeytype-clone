@@ -2,21 +2,48 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { generate } from 'random-words';
 import { RefreshCw } from 'lucide-react';
 import styles from './TypingScreen.module.css';
+import Navigation from '../Navigation/Navigation';
+import Quote from 'inspirational-quotes';
 
-
-/*
-    
-
-*/
 const WORDS_PER_LINE = 15;
-const INITIAL_TIME = 15;
+const VISIBLE_LINES = 3;
+const BUFFER_LINES = 2;
+
+
+const generateSentence = () => {
+    const sentences = [
+        "The quick brown fox jumps over the lazy dog.",
+        "All that glitters is not gold in this world.",
+        "Actions speak louder than words when time comes.",
+        "Practice makes perfect, so keep trying hard.",
+        "A journey of a thousand miles begins here.",
+        "Success is not final, failure is not fatal.",
+        "Time heals all wounds and brings new hope.",
+        "Knowledge is power, guard it with wisdom.",
+        "Life is what happens while you make plans.",
+        "The best things in life are worth waiting."
+    ];
+    return sentences[Math.floor(Math.random() * sentences.length)].split(' ');
+};
+
+const generateNumberWord = () => {
+    // Generate a number between 0 and 999
+    return Math.floor(Math.random() * 1000).toString();
+};
+
+const generatePunctuatedWord = (word) => {
+    const punctuation = ['.', ',', '!', '?', ';', ':'];
+    const randomPunctuation = punctuation[Math.floor(Math.random() * punctuation.length)];
+    return word + randomPunctuation;
+};
 
 const useTimer = (initialTime, isRunning, onReset) => {
     const [timeLeft, setTimeLeft] = useState(initialTime);
     const intervalRef = useRef(null);
-  
+    
     useEffect(() => {
       if (!isRunning) {
+        clearInterval(intervalRef.current);
         return;
       }
   
@@ -30,11 +57,7 @@ const useTimer = (initialTime, isRunning, onReset) => {
         });
       }, 1000);
   
-      return () => {
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current);
-        }
-      };
+      return () => clearInterval(intervalRef.current);
     }, [isRunning]);
   
     const resetTimer = useCallback(() => {
@@ -44,19 +67,21 @@ const useTimer = (initialTime, isRunning, onReset) => {
   
     return [timeLeft, resetTimer];
 };
-    
-const TypingScreen = () => {
+
+const TypingScreen = ({ initialTime, gameMode, targetWordCount, selected }) => {
     const [words, setWords] = useState([]);
     const [currentWordIndex, setCurrentWordIndex] = useState(0);
     const [gameStarted, setGameStarted] = useState(false);
+    const [totalWordsTyped, setTotalWordsTyped] = useState(0);
     const [currentLetterIndex, setCurrentLetterIndex] = useState(0);
     const [currentLineIndex, setCurrentLineIndex] = useState(0);
     const [userInput, setUserInput] = useState('');
     const [letterStates, setLetterStates] = useState([]);
     const [wordStates, setWordStates] = useState([]);
     const [isFocused, setIsFocused] = useState(false);
-    const [wordsPerLine, setWordsPerLine] = useState(10);
-    const [typedWords, setTypedWords] = useState([])
+    const [typedWords, setTypedWords] = useState([]);
+    const [wordModeTime, setWordModeTime] = useState(0);
+    const [wordModeInterval, setWordModeInterval] = useState(null);
     const [gameOver, setGameOver] = useState(false);
     const [gameStats, setGameStats] = useState({
         wpm: 0,
@@ -64,77 +89,192 @@ const TypingScreen = () => {
         totalWords: 0,
         correctWords: 0,
         incorrectWords: 0
-      });
+    });
     const typingScreenRef = useRef(null);
     const cursorRef = useRef(null);
     const containerRef = useRef(null);
 
-    const resetGame = useCallback(() => {
-        setGameStarted(false);
-        setCurrentWordIndex(0);
-        setCurrentLetterIndex(0);
-        setCurrentLineIndex(0);
-        setUserInput('');
-        setTypedWords([]);
-        loadWords();
-    }, []);
+    const generateWord = useCallback(() => {
+        if (selected.numbers && Math.random() < 0.3) { // 30% chance for numbers
+            return generateNumberWord();
+        }
+        
+        let word = generate({ minLength: 3, maxLength: 8, exactly: 1 })[0];
+        
+        if (selected.punctuation && Math.random() < 0.3) { // 30% chance for punctuation
+            word = generatePunctuatedWord(word);
+        }
+        
+        return word;
+    }, [selected]);
 
-    
+    const generateNewLine = useCallback(() => {
+        if (selected.sentences) {
+            const sentence = generateSentence();
+            // Pad the sentence to WORDS_PER_LINE if needed
+            return Array(WORDS_PER_LINE).fill(null).map((_, index) => 
+                sentence[index % sentence.length] || generate({ minLength: 3, maxLength: 8, exactly: 1 })[0]
+            );
+        }
 
-    const [timeLeft, resetTimer] = useTimer(INITIAL_TIME, gameStarted, resetGame);
+        return Array(WORDS_PER_LINE).fill(null).map(() => generateWord());
+    }, [selected, generateWord]);
+
 
     const loadWords = useCallback(() => {
-        const generatedWords = generate(600);
+        // Generate initial lines including buffer
+        const generatedWords = Array(VISIBLE_LINES + BUFFER_LINES)
+            .fill(null)
+            .map(() => generateNewLine());
+        
         setWords(generatedWords);
-        setLetterStates(generatedWords.map(word => Array(word.length).fill('default')));
-        setWordStates(generatedWords.map(() => 'default'));
-    }, []);
+        setLetterStates(generatedWords.map(line => 
+            line.map(word => Array(word.length).fill('default'))
+        ));
+        setWordStates(generatedWords.map(line => 
+            line.map(() => 'default')
+        ));
+    }, [generateNewLine]);
+
+    const shiftLinesUp = useCallback(() => {
+        setWords(prevWords => {
+            // Remove the first line and add a new line at the bottom
+            const newWords = [...prevWords.slice(1), generateNewLine()];
+            
+            // Update the states accordingly
+            setLetterStates(prev => [
+                ...prev.slice(1),
+                newWords[newWords.length - 1].map(word => Array(word.length).fill('default'))
+            ]);
+            setWordStates(prev => [
+                ...prev.slice(1),
+                newWords[newWords.length - 1].map(() => 'default')
+            ]);
+            
+            return newWords;
+        });
+    }, [generateNewLine]);
+
+
+    const [timeLeft, resetTimer] = useTimer(
+        initialTime,
+        gameMode === 'time' && gameStarted,
+        null // Remove the resetGame callback to avoid unwanted resets
+    );
+
+    // 2. Update resetGame to be simpler
+    const resetGame = useCallback((force = false) => {
+        if (force || !gameStarted) {
+            setGameStarted(false);
+            setGameOver(false);
+            setCurrentWordIndex(0);
+            setCurrentLetterIndex(0);
+            setCurrentLineIndex(0);
+            setUserInput('');
+            setTypedWords([]);
+            setTotalWordsTyped(0);
+            setWordModeTime(0);
+            if (wordModeInterval) {
+                clearInterval(wordModeInterval);
+                setWordModeInterval(null);
+            }
+            loadWords();
+            resetTimer();
+            
+            setGameStats({
+                wpm: 0,
+                accuracy: 0,
+                totalWords: 0,
+                correctWords: 0,
+                incorrectWords: 0
+            });
+        }
+    }, [loadWords, wordModeInterval, gameStarted, resetTimer]);
+    
+
+    const isInitialMount = useRef(true);
+    const prevPropsRef = useRef({ gameMode, initialTime, targetWordCount, selected });
+
+    // Remove the duplicate useEffect and combine the logic into one
+    useEffect(() => {
+        const prevProps = prevPropsRef.current;
+        
+        // Only reset if navigation props actually changed
+        if (prevProps.gameMode !== gameMode ||
+            prevProps.initialTime !== initialTime ||
+            prevProps.targetWordCount !== targetWordCount ||
+            JSON.stringify(prevProps.selected) !== JSON.stringify(selected)) {
+            resetGame(true);
+            if (typingScreenRef.current) {
+                typingScreenRef.current.focus();
+            }
+        }
+        
+        // Update the ref
+        prevPropsRef.current = { gameMode, initialTime, targetWordCount, selected };
+    }, [gameMode, initialTime, targetWordCount, selected, resetGame]);
+
 
     useEffect(() => {
         loadWords();
-    }, [loadWords]);
-
-    useEffect(() => {
-        if (timeLeft === 0) {
-          setGameStarted(false);
-          setGameOver(true);
-          calculateGameStats();
-        }
-      }, [timeLeft]);
-    
-    const calculateWordsPerLine = useCallback(() => {
-        if (containerRef.current) {
-            const containerWidth = containerRef.current.offsetWidth;
-            const wordWidth = 100; // Approximate width of a word in pixels
-            const newWordsPerLine = Math.floor(containerWidth / wordWidth);
-            setWordsPerLine(Math.max(newWordsPerLine, 1)); // Ensure at least 1 word per line
-        }
     }, []);
 
-    useEffect(() => {
-        calculateWordsPerLine();
-        window.addEventListener('resize', calculateWordsPerLine);
-        return () => window.removeEventListener('resize', calculateWordsPerLine);
-    }, [calculateWordsPerLine]);
 
-    const calculateGameStats = () => {
+    useEffect(() => {
+        if (gameMode === 'words' && gameStarted && !wordModeInterval) {
+            const interval = setInterval(() => {
+                setWordModeTime(prev => prev + 1);
+            }, 1000);
+            setWordModeInterval(interval);
+        }
+        return () => {
+            if (wordModeInterval) {
+                clearInterval(wordModeInterval);
+                setWordModeInterval(null);
+            }
+        };
+    }, [gameMode, gameStarted]);
+
+    useEffect(() => {
+        if (gameMode === 'time' && timeLeft === 0) {
+            setGameStarted(false);
+            setGameOver(true);
+            calculateGameStats();
+        } else if (gameMode === 'words' && totalWordsTyped >= targetWordCount) {
+            setGameStarted(false);
+            setGameOver(true);
+            clearInterval(wordModeInterval);
+            calculateGameStats();
+        }
+    }, [timeLeft, totalWordsTyped, gameMode, targetWordCount, wordModeInterval]);
+    const calculateGameStats = useCallback(() => {
         const totalWords = typedWords.length;
         const correctWords = typedWords.filter(word => word.correct).length;
         const incorrectWords = totalWords - correctWords;
         const accuracy = totalWords > 0 ? (correctWords / totalWords) * 100 : 0;
-        const wpm = (totalWords / (INITIAL_TIME / 60))
+        
+        let wpm;
+        if (gameMode === 'time') {
+            wpm = (totalWords / (initialTime / 60));
+        } else {
+            // For word mode, calculate WPM based on actual time taken
+            const minutesTaken = wordModeTime / 60;
+            wpm = totalWords / Math.max(minutesTaken, 1/60);
+        }
     
         setGameStats({
-          wpm: Math.round(wpm),
-          accuracy: accuracy.toFixed(2),
-          totalWords,
-          correctWords,
-          incorrectWords
+            wpm: Math.round(wpm),
+            accuracy: accuracy.toFixed(2),
+            totalWords,
+            correctWords,
+            incorrectWords,
+            timeElapsed: gameMode === 'words' ? `${wordModeTime}s` : initialTime
         });
-      };
+    }, [typedWords, initialTime, gameMode, wordModeTime]);
+
 
     const moveCursor = useCallback(() => {
-        const currentWord = words[currentWordIndex];
+        const currentWord = words[currentLineIndex]?.[currentWordIndex];
         if (!currentWord || !isFocused) return;
 
         const wordElement = document.querySelector(`.${styles['active-word']}`);
@@ -149,7 +289,7 @@ const TypingScreen = () => {
             cursor.style.left = `${rect.left - containerRect.left + (currentLetterIndex >= currentWord.length ? rect.width : 0)}px`;
             cursor.style.top = `${rect.top - containerRect.top}px`;
         }
-    }, [currentWordIndex, currentLetterIndex, words, isFocused]);
+    }, [currentWordIndex, currentLetterIndex, words, isFocused, currentLineIndex]);
 
     useEffect(() => {
         if (isFocused) {
@@ -157,60 +297,38 @@ const TypingScreen = () => {
         }
     }, [isFocused, moveCursor]);
 
-    const handleFocus = () => {
-        setIsFocused(true);
-    };
+    const handleFocus = () => setIsFocused(true);
+    const handleBlur = () => setIsFocused(false);
 
-    const handleBlur = () => {
-        setIsFocused(false);
-    };
-
-    useEffect(() => {
-        const handleResize = () => {
-            if (typingScreenRef.current) {
-                typingScreenRef.current.blur();
-            }
-        };
-
-        window.addEventListener('resize', handleResize);
-        return () => {
-            window.removeEventListener('resize', handleResize);
-        };
-    }, []);
-
-    useEffect(() => {
-        if (!gameStarted && userInput.length > 0) {
+    const handleKeyDown = useCallback((event) => {
+        if (!gameStarted && !gameOver) {
             setGameStarted(true);
         }
-    }, [gameStarted, userInput]);
-    const handleKeyDown = useCallback((event) => {
-
-        if (!gameStarted) {
-            setGameStarted(true);
-          }
                   
-        const currentWord = words[currentWordIndex];
+        const currentWord = words[currentLineIndex]?.[currentWordIndex];
+        if (!currentWord) return;
         
         if (event.key === 'Backspace' && currentLetterIndex > 0) {
             setCurrentLetterIndex(prevIndex => prevIndex - 1);
             setUserInput(prevInput => prevInput.slice(0, -1));
             setLetterStates(prevStates => {
                 const newStates = [...prevStates];
-                newStates[currentWordIndex][currentLetterIndex - 1] = 'default';
+                newStates[currentLineIndex][currentWordIndex][currentLetterIndex - 1] = 'default';
                 return newStates;
             });
-            // Reset word state to default when backspacing
             setWordStates(prevStates => {
                 const newStates = [...prevStates];
-                newStates[currentWordIndex] = 'default';
+                newStates[currentLineIndex][currentWordIndex] = 'default';
                 return newStates;
             });
-        } else if (event.key === ' ') {
+        }  else if (event.key === ' ') {
             if (currentLetterIndex > 0) {
+                // For punctuated words, we need to match exactly
                 const isWordCorrect = userInput === currentWord;
+                setTotalWordsTyped(prev => prev + 1);
                 setWordStates(prevStates => {
                     const newStates = [...prevStates];
-                    newStates[currentWordIndex] = isWordCorrect ? 'correct-word' : 'incorrect-word';
+                    newStates[currentLineIndex][currentWordIndex] = isWordCorrect ? 'correct-word' : 'incorrect-word';
                     return newStates;
                 });
 
@@ -218,23 +336,25 @@ const TypingScreen = () => {
                     word: userInput,
                     correct: isWordCorrect
                 }]);
-                console.log(`Word ${currentWordIndex} completed. Correct: ${isWordCorrect}`);
 
                 const nextWordIndex = currentWordIndex + 1;
-                setCurrentWordIndex(nextWordIndex);
+                if (nextWordIndex >= words[currentLineIndex].length) {
+                    // When reaching the end of a line
+                    shiftLinesUp();
+                    setCurrentWordIndex(0);
+                } else {
+                    setCurrentWordIndex(nextWordIndex);
+                }
                 setCurrentLetterIndex(0);
                 setUserInput('');
-                
-                if (nextWordIndex % WORDS_PER_LINE === 0 && nextWordIndex < words.length) {
-                    setCurrentLineIndex(prevLineIndex => prevLineIndex + 1);
-                }
             }
-        } else if (event.key.length === 1) { 
+        } else if (event.key.length === 1) {
+            // Handle typing of punctuation marks as well
             if (currentLetterIndex < currentWord.length) {
                 const isCorrect = event.key === currentWord[currentLetterIndex];
                 setLetterStates(prevStates => {
                     const newStates = [...prevStates];
-                    newStates[currentWordIndex][currentLetterIndex] = isCorrect ? 'correct-letter' : 'incorrect-letter';
+                    newStates[currentLineIndex][currentWordIndex][currentLetterIndex] = isCorrect ? 'correct-letter' : 'incorrect-letter';
                     return newStates;
                 });
                 setCurrentLetterIndex(prevIndex => prevIndex + 1);
@@ -243,13 +363,13 @@ const TypingScreen = () => {
                 if (!isCorrect) {
                     setWordStates(prevStates => {
                         const newStates = [...prevStates];
-                        newStates[currentWordIndex] = 'incorrect-word';
+                        newStates[currentLineIndex][currentWordIndex] = 'incorrect-word';
                         return newStates;
                     });
                 }
             }
         }
-    }, [gameStarted, currentWordIndex, currentLetterIndex, words, userInput, WORDS_PER_LINE]);
+    }, [gameStarted, currentWordIndex, currentLetterIndex, words, userInput, currentLineIndex, shiftLinesUp]);
 
     useEffect(() => {
         if (isFocused) {
@@ -261,56 +381,50 @@ const TypingScreen = () => {
     }, [isFocused, handleKeyDown]);
 
     const renderWords = useCallback(() => {
-        const lines = [];
-        for (let i = 0; i < words.length; i += wordsPerLine) {
-            const lineWords = words.slice(i, i + wordsPerLine);
-            const lineIndex = i / wordsPerLine;
-            const isLastLine = i + wordsPerLine >= words.length;
-            
-            lines.push(
-                <div key={lineIndex} className={`${styles.line} ${isLastLine ? styles.lastLine : ''}`}>
-                    {lineWords.map((word, wordIndex) => {
-                        const globalWordIndex = i + wordIndex;
-                        const wordState = wordStates[globalWordIndex];
-                        return (
-                            <span
-                                key={globalWordIndex}
-                                className={`${styles.word} 
-                                    ${globalWordIndex === currentWordIndex ? styles['active-word'] : ''}
-                                    ${styles[wordState]}`}
-                            >
-                                {word.split('').map((letter, letterIndex) => (
+        return words.slice(0, VISIBLE_LINES).map((line, lineIndex) => (
+            <div key={lineIndex} className={`${styles.line} ${lineIndex === VISIBLE_LINES - 1 ? styles.lastLine : ''}`}>
+                {line.map((word, wordIndex) => {
+                    const wordState = wordStates[lineIndex]?.[wordIndex] || 'default';
+                    return (
+                        <span
+                            key={wordIndex}
+                            className={`${styles.word} 
+                                ${lineIndex === currentLineIndex && wordIndex === currentWordIndex ? styles['active-word'] : ''}
+                                ${styles[wordState]}`} // Apply the word state class
+                        >
+                            {word.split('').map((letter, letterIndex) => {
+                                const letterState = letterStates[lineIndex]?.[wordIndex]?.[letterIndex] || 'default';
+                                return (
                                     <span
                                         key={letterIndex}
                                         className={`${styles.letter} 
-                                            ${globalWordIndex === currentWordIndex && letterIndex === currentLetterIndex
-                                                ? styles['active-letter'] : ''}
-                                            ${styles[letterStates[globalWordIndex][letterIndex]]}`}
+                                            ${lineIndex === currentLineIndex && 
+                                              wordIndex === currentWordIndex && 
+                                              letterIndex === currentLetterIndex ? styles['active-letter'] : ''}
+                                            ${styles[letterState]}`}
                                     >
                                         {letter}
                                     </span>
-                                ))}
-                                <span className={styles.space}>&nbsp;</span>
-                            </span>
-                        );
-                    })}
-                </div>
-            );
-        }
-        return lines;
-    }, [words, currentWordIndex, currentLetterIndex, letterStates, wordStates, wordsPerLine]);
+                                );
+                            })}
+                            <span className={styles.space}>&nbsp;</span>
+                        </span>
+                    );
+                })}
+            </div>
+        ));
+    }, [words, currentWordIndex, currentLetterIndex, letterStates, wordStates, currentLineIndex]);
 
     const handleRefresh = useCallback(() => {
-        resetTimer();
-        resetGame();
+        resetGame(true);
         setGameOver(false);
-
+        
         if (typingScreenRef.current) {
             typingScreenRef.current.focus();
         }
-    }, [resetTimer, resetGame]);
+    }, [resetGame]);
     
-    const renderGameStats = () => (
+    const renderGameStats = useCallback(() => (
         <div className={styles.gameStats}>
           <h2>Game Over! Here are your results:</h2>
           <ul>
@@ -320,33 +434,57 @@ const TypingScreen = () => {
             <li>Correct Words: {gameStats.correctWords}</li>
             <li>Incorrect Words: {gameStats.incorrectWords}</li>
           </ul>
-
         </div>
-      );
+    ), [gameStats]);
 
-    return (
+
+
+    
+    // Modified header rendering
+    const renderHeader = useCallback(() => {
+        return (
+            <div className={styles.header}>
+                <button onClick={handleRefresh} className={styles.refreshButton}>
+                    <RefreshCw size={24} />
+                </button>
+                <div className={styles.gameInfo}>
+                    {!gameOver && (
+                        gameMode === 'time' ? (
+                            <div className={styles.seconds}>{timeLeft}</div>
+                        ) : (
+                            <div className={styles.wordsProgress}>
+                                <span className={styles.wordCount}>
+                                    {totalWordsTyped}/{targetWordCount}
+                                </span>
+                                <span className={styles.timeLabel}>Time:</span>
+                                <span className={styles.timeValue}>{wordModeTime}s</span>
+                            </div>
+                        )
+                    )}
+                </div>
+            </div>
+        );
+    }, [gameMode, timeLeft, totalWordsTyped, targetWordCount, wordModeTime, gameOver, handleRefresh]);
+
+// Update the return JSX to always show the header
+return (
     <div className={styles.typingScreen} 
          tabIndex="0"
          onFocus={handleFocus}
          onBlur={handleBlur}
          ref={typingScreenRef}>
-      <div className={styles.header}>
-        {!gameOver && <div className={styles.seconds}>{timeLeft}</div>}
-        <button onClick={handleRefresh} className={styles.refreshButton}>
-          <RefreshCw size={24} />
-        </button>
-      </div>
-      {!gameOver ? (
-        <>
-          <div className={styles.wordsContainer} ref={containerRef}>
-            {renderWords().slice(currentLineIndex, currentLineIndex + 3)}
-          </div>
-          {isFocused && <div className={styles.cursor} ref={cursorRef}></div>}
-          {!isFocused && <div className={styles.focusError}>Click Here to Type</div>}
-        </>
-      ) : renderGameStats()}
+        {renderHeader()}
+        {!gameOver ? (
+            <>
+                <div className={styles.wordsContainer} ref={containerRef}>
+                    {renderWords()}
+                </div>
+                {isFocused && <div className={styles.cursor} ref={cursorRef}></div>}
+                {!isFocused && <div className={styles.focusError}>Click Here to Type</div>}
+            </>
+        ) : renderGameStats()}
     </div>
-  );
+);
 };
 
 export default TypingScreen;

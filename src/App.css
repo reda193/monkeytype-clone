@@ -1,9 +1,10 @@
-.App {
-  text-align: center;
-  margin: 0 px;
+.app-container {
+  min-height: 100vh;
+  background-color: #222222;
 }
-body {
 
-  background-color: #333; /* Dark background for header */
-
+.navigation-wrapper {
+  display: flex;
+  justify-content: center;
+  width: 100%;
 }
